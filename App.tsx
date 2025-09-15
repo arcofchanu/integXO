@@ -13,8 +13,8 @@ const Game: React.FC<{ userEmail: string, onSignOut: () => void }> = ({ userEmai
   const [hasPaid, setHasPaid] = useState(false);
 
   useEffect(() => {
-    // Show popup after 7 matches if user hasn't paid
-    if (totalMatches >= 7 && !hasPaid) {
+    // Show popup after 3 matches if user hasn't paid
+    if (totalMatches >= 1 && !hasPaid) {
       setShowPaymentPopup(true);
     }
   }, [totalMatches, hasPaid]);
@@ -24,8 +24,13 @@ const Game: React.FC<{ userEmail: string, onSignOut: () => void }> = ({ userEmai
     setShowPaymentPopup(false);
   }, []);
 
+  const handleClosePayment = useCallback(() => {
+    setShowPaymentPopup(false);
+    // Allow user to close popup, but it will reappear when they play again
+  }, []);
+
   return (
-    <div className={`relative z-10 flex flex-col items-center backdrop-blur-sm bg-black/30 p-8 rounded-lg transition-all duration-300 ${showPaymentPopup ? 'blur-sm pointer-events-none' : ''}`}>
+    <div className="relative z-10 flex flex-col items-center backdrop-blur-sm bg-black/30 p-8 rounded-lg transition-all duration-300">
       <header className="mb-4 text-center w-full">
         <div className="flex justify-between items-center mb-4">
           <p className="text-sm text-gray-400 truncate max-w-[200px]" title={userEmail}>{userEmail}</p>
@@ -52,7 +57,7 @@ const Game: React.FC<{ userEmail: string, onSignOut: () => void }> = ({ userEmai
           squares={board} 
           onClick={handleClick} 
           winningLine={winningLine} 
-          isGameOver={!!winner || showPaymentPopup}
+          isGameOver={!!winner}
         />
         <button
           onClick={() => resetGame(true)}
@@ -61,7 +66,12 @@ const Game: React.FC<{ userEmail: string, onSignOut: () => void }> = ({ userEmai
           Reset Scores
         </button>
       </main>
-      {showPaymentPopup && <PaymentPopup onPaymentSuccess={handlePaymentSuccess} />}
+      {showPaymentPopup && (
+        <PaymentPopup 
+          onPaymentSuccess={handlePaymentSuccess} 
+          onClose={handleClosePayment}
+        />
+      )}
     </div>
   );
 };
