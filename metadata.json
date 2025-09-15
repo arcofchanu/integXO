@@ -1,0 +1,5 @@
+{
+  "name": "Monochrome Tic Tac Toe",
+  "description": "A classic Tic Tac Toe game with a live, animated, pitch-dark monochrome theme for a modern and immersive experience.",
+  "requestFramePermissions": []
+}
