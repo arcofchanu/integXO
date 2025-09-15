@@ -35,9 +35,10 @@ export const PaymentPopup: React.FC<PaymentPopupProps> = ({ onPaymentSuccess, on
   // Load PayPal SDK
   const loadPayPalSDK = useCallback(() => {
     const clientId = import.meta.env.VITE_PAYPAL_CLIENT_ID;
+    const environment = import.meta.env.VITE_PAYPAL_ENVIRONMENT || 'sandbox';
     
-    if (!clientId || clientId === 'YOUR_PAYPAL_CLIENT_ID') {
-      setError('PayPal Client ID not configured. Please add VITE_PAYPAL_CLIENT_ID to your .env file.');
+    if (!clientId || clientId === 'YOUR_SANDBOX_CLIENT_ID_HERE') {
+      setError('PayPal Client ID not configured. Please add your sandbox credentials to the .env file.');
       return Promise.reject('No client ID');
     }
 
@@ -54,7 +55,8 @@ export const PaymentPopup: React.FC<PaymentPopupProps> = ({ onPaymentSuccess, on
       setIsSDKLoading(true);
       
       const script = document.createElement('script');
-      script.src = `https://www.paypal.com/sdk/js?client-id=${clientId}&currency=USD&intent=capture&commit=true&vault=false&disable-funding=credit,card&enable-funding=venmo`;
+      // Use sandbox environment with proper parameters
+      script.src = `https://www.paypal.com/sdk/js?client-id=${clientId}&currency=USD&intent=capture&environment=${environment}`;
       script.async = true;
       
       script.onload = () => {
@@ -103,27 +105,24 @@ export const PaymentPopup: React.FC<PaymentPopupProps> = ({ onPaymentSuccess, on
         createOrder: function() {
           console.log('Creating PayPal order...');
           
-          // Use client-side order creation for testing
-          return window.paypal.request({
-            url: '/v2/checkout/orders',
+          return fetch('http://localhost:3001/api/create-paypal-order', {
             method: 'POST',
-            json: {
-              intent: 'CAPTURE',
-              purchase_units: [{
-                amount: {
-                  currency_code: 'USD',
-                  value: '1.00'
-                },
-                description: 'Unlock unlimited Tic Tac Toe plays'
-              }],
-              application_context: {
-                return_url: window.location.origin,
-                cancel_url: window.location.origin
-              }
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              amount: '1.00',
+              currency: 'USD',
+              description: 'Unlock unlimited Tic Tac Toe plays'
+            })
+          }).then(response => {
+            if (!response.ok) {
+              throw new Error(`Failed to create order: ${response.status}`);
             }
-          }).then((res: any) => {
-            console.log('Order created:', res.id);
-            return res.id;
+            return response.json();
+          }).then(data => {
+            console.log('Order created:', data.orderID);
+            return data.orderID;
           }).catch((error: any) => {
             console.error('Order creation failed:', error);
             throw new Error('Failed to create PayPal order');
@@ -134,11 +133,20 @@ export const PaymentPopup: React.FC<PaymentPopupProps> = ({ onPaymentSuccess, on
           console.log('Payment approved, order ID:', data.orderID);
           setPaymentProcessing(true);
           
-          // Use client-side capture for testing
-          return window.paypal.request({
-            url: `/v2/checkout/orders/${data.orderID}/capture`,
-            method: 'POST'
-          }).then((details: any) => {
+          return fetch('http://localhost:3001/api/capture-paypal-order', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              orderID: data.orderID
+            })
+          }).then(response => {
+            if (!response.ok) {
+              throw new Error(`Failed to capture payment: ${response.status}`);
+            }
+            return response.json();
+          }).then(details => {
             console.log('Payment captured:', details);
             if (details.status === 'COMPLETED') {
               onPaymentSuccess();
@@ -261,7 +269,7 @@ export const PaymentPopup: React.FC<PaymentPopupProps> = ({ onPaymentSuccess, on
               <button
                 onClick={handleShowPayment}
                 disabled={isSDKLoading}
-                className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 disabled:from-gray-600 disabled:to-gray-700 text-white font-bold py-4 px-6 rounded-lg transition-all duration-300 transform hover:scale-105 shadow-lg flex items-center justify-center space-x-3 mb-3"
+                className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 disabled:from-gray-600 disabled:to-gray-700 text-white font-bold py-4 px-6 rounded-lg transition-all duration-300 transform hover:scale-105 shadow-lg flex items-center justify-center space-x-3"
               >
                 <img 
                   src="https://www.paypalobjects.com/webstatic/mktg/Logo/pp-logo-100px.png" 
@@ -269,18 +277,6 @@ export const PaymentPopup: React.FC<PaymentPopupProps> = ({ onPaymentSuccess, on
                   className="h-6 w-auto"
                 />
                 <span>{isSDKLoading ? 'Loading...' : 'Pay with PayPal'}</span>
-              </button>
-              
-              {/* Test mode button for development */}
-              <button
-                onClick={() => {
-                  console.log('Test payment success triggered');
-                  onPaymentSuccess();
-                }}
-                className="w-full bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-105 shadow-lg flex items-center justify-center space-x-2"
-              >
-                <span>🧪</span>
-                <span>Test Mode - Simulate Payment Success</span>
               </button>
               
               <p className="text-xs text-gray-500 mt-4">
