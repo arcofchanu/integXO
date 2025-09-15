@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 
-// This is to inform TypeScript about the paypal object on the window
+// PayPal SDK types
 declare global {
   interface Window {
     paypal: any;
@@ -9,108 +9,394 @@ declare global {
 
 interface PaymentPopupProps {
   onPaymentSuccess: () => void;
+  onClose: () => void;
 }
 
-export const PaymentPopup: React.FC<PaymentPopupProps> = ({ onPaymentSuccess }) => {
-  const paypalRef = useRef<HTMLDivElement>(null);
-  const [isLoading, setIsLoading] = useState(true);
+export const PaymentPopup: React.FC<PaymentPopupProps> = ({ onPaymentSuccess, onClose }) => {
+  const paypalContainerRef = useRef<HTMLDivElement>(null);
+  const sdkLoadedRef = useRef(false);
+  const buttonsRenderedRef = useRef(false);
+  const [currentStep, setCurrentStep] = useState<'intro' | 'payment'>('intro');
+  const [isSDKLoading, setIsSDKLoading] = useState(false);
+  const [isButtonsLoading, setIsButtonsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [paymentProcessing, setPaymentProcessing] = useState(false);
 
-  useEffect(() => {
-    const loadPayPalSDK = () => {
-      const clientId = import.meta.env.VITE_PAYPAL_CLIENT_ID || 'sb';
+  // Clean up function
+  const cleanup = useCallback(() => {
+    if (paypalContainerRef.current) {
+      paypalContainerRef.current.innerHTML = '';
+    }
+    buttonsRenderedRef.current = false;
+    setIsButtonsLoading(false);
+    setError(null);
+  }, []);
+
+  // Load PayPal SDK
+  const loadPayPalSDK = useCallback(() => {
+    const clientId = import.meta.env.VITE_PAYPAL_CLIENT_ID;
+    
+    if (!clientId || clientId === 'YOUR_PAYPAL_CLIENT_ID') {
+      setError('PayPal Client ID not configured. Please add VITE_PAYPAL_CLIENT_ID to your .env file.');
+      return Promise.reject('No client ID');
+    }
+
+    // Check if already loaded
+    if (window.paypal && sdkLoadedRef.current) {
+      return Promise.resolve();
+    }
+
+    // Remove existing scripts
+    const existingScripts = document.querySelectorAll('script[src*="paypal.com/sdk/js"]');
+    existingScripts.forEach(script => script.remove());
+
+    return new Promise((resolve, reject) => {
+      setIsSDKLoading(true);
       
-      if (clientId === 'YOUR_PAYPAL_CLIENT_ID') {
-        setError('PayPal client ID not configured');
-        setIsLoading(false);
-        return;
-      }
-
-      // Check if PayPal SDK is already loaded
-      if (window.paypal) {
-        renderPayPalButtons();
-        return;
-      }
-
-      // Create script element to load PayPal SDK
       const script = document.createElement('script');
-      script.src = `https://www.paypal.com/sdk/js?client-id=${clientId}&currency=USD`;
+      script.src = `https://www.paypal.com/sdk/js?client-id=${clientId}&currency=USD&intent=capture&commit=true&vault=false&disable-funding=credit,card&enable-funding=venmo`;
       script.async = true;
       
       script.onload = () => {
-        renderPayPalButtons();
+        console.log('PayPal SDK loaded successfully');
+        sdkLoadedRef.current = true;
+        setIsSDKLoading(false);
+        resolve(undefined);
       };
       
       script.onerror = () => {
-        setError('Failed to load PayPal SDK');
-        setIsLoading(false);
+        console.error('Failed to load PayPal SDK');
+        setIsSDKLoading(false);
+        setError('Failed to load PayPal SDK. Please check your internet connection.');
+        reject('SDK load failed');
       };
 
       document.head.appendChild(script);
-    };
+    });
+  }, []);
 
-    const renderPayPalButtons = () => {
-      if (!paypalRef.current) return;
+  // Render PayPal buttons
+  const renderPayPalButtons = useCallback(async () => {
+    if (!paypalContainerRef.current || buttonsRenderedRef.current) return;
+    
+    // Ensure container is clean
+    cleanup();
+    
+    if (!window.paypal) {
+      setError('PayPal SDK not loaded');
+      return;
+    }
 
-      const paypalContainer = paypalRef.current;
-      
-      // Clear the container to ensure a clean slate
-      paypalContainer.innerHTML = '';
-
-      try {
-        // Render the PayPal buttons
-        window.paypal.Buttons({
-          createOrder: (_data: any, actions: any) => {
-            return actions.order.create({
-              purchase_units: [{
-                description: 'Unlock unlimited plays for Tic Tac Toe.',
-                amount: {
-                  currency_code: 'USD',
-                  value: '1.00',
-                },
-              }],
+    setIsButtonsLoading(true);
+    
+    try {
+      await window.paypal.Buttons({
+        style: {
+          color: 'blue',
+          shape: 'rect',
+          label: 'pay',
+          height: 45,
+          tagline: false,
+          layout: 'vertical'
+        },
+        
+        createOrder: function() {
+          console.log('Creating PayPal order...');
+          
+          // For localhost development, use simpler order creation
+          if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            return window.paypal.request({
+              url: '/v2/checkout/orders',
+              method: 'POST',
+              json: {
+                intent: 'CAPTURE',
+                purchase_units: [{
+                  amount: {
+                    currency_code: 'USD',
+                    value: '1.00'
+                  },
+                  description: 'Unlock unlimited Tic Tac Toe plays'
+                }],
+                application_context: {
+                  return_url: window.location.origin + '/success',
+                  cancel_url: window.location.origin + '/cancel'
+                }
+              }
+            }).then((res: any) => {
+              console.log('Order created for localhost:', res.id);
+              return res.id;
             });
-          },
-          onApprove: async (_data: any, actions: any) => {
-            // This function is called when the user approves the payment.
-            return actions.order.capture().then(() => {
+          }
+          
+          // Production order creation
+          return fetch('/api/create-paypal-order', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              amount: '1.00',
+              currency: 'USD',
+              description: 'Unlock unlimited Tic Tac Toe plays'
+            })
+          }).then(response => {
+            if (!response.ok) {
+              throw new Error('Failed to create order');
+            }
+            return response.json();
+          }).then(data => {
+            console.log('Order created:', data.orderID);
+            return data.orderID;
+          }).catch(() => {
+            // Fallback to client-side order creation
+            return window.paypal.request({
+              url: '/v2/checkout/orders',
+              method: 'POST',
+              json: {
+                intent: 'CAPTURE',
+                purchase_units: [{
+                  amount: {
+                    currency_code: 'USD',
+                    value: '1.00'
+                  },
+                  description: 'Unlock unlimited Tic Tac Toe plays'
+                }]
+              }
+            }).then((res: any) => res.id);
+          });
+        },
+
+        onApprove: function(data: any) {
+          console.log('Payment approved, order ID:', data.orderID);
+          setPaymentProcessing(true);
+          
+          return fetch('/api/capture-paypal-order', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              orderID: data.orderID
+            })
+          }).then(response => {
+            if (!response.ok) {
+              throw new Error('Failed to capture payment');
+            }
+            return response.json();
+          }).then(details => {
+            console.log('Payment captured:', details);
+            if (details.status === 'COMPLETED') {
               onPaymentSuccess();
+            } else {
+              setError('Payment was not completed successfully');
+            }
+          }).catch(() => {
+            // Fallback to client-side capture
+            return window.paypal.request({
+              url: `/v2/checkout/orders/${data.orderID}/capture`,
+              method: 'POST'
+            }).then((details: any) => {
+              console.log('Payment captured via fallback:', details);
+              if (details.status === 'COMPLETED') {
+                onPaymentSuccess();
+              } else {
+                setError('Payment was not completed successfully');
+              }
             });
-          },
-          onError: (err: any) => {
-            console.error("PayPal Checkout onError", err);
-            setError('Payment error occurred. Please try again.');
-          },
-        }).render(paypalContainer).then(() => {
-          setIsLoading(false);
-        }).catch((err: any) => {
-          console.error("PayPal render error", err);
-          setError('Could not render payment button.');
-          setIsLoading(false);
-        });
-      } catch (err) {
-        console.error("PayPal setup error", err);
-        setError('Failed to initialize PayPal.');
-        setIsLoading(false);
-      }
-    };
+          }).finally(() => {
+            setPaymentProcessing(false);
+          });
+        },
 
-    loadPayPalSDK();
-  }, [onPaymentSuccess]);
+        onCancel: function(data: any) {
+          console.log('Payment cancelled:', data);
+          setError('Payment was cancelled. You can try again anytime.');
+          setPaymentProcessing(false);
+        },
+
+        onError: function(err: any) {
+          console.error('PayPal Error:', err);
+          setError('An error occurred during payment. Please try again.');
+          setPaymentProcessing(false);
+        }
+        
+      }).render(paypalContainerRef.current);
+      
+      buttonsRenderedRef.current = true;
+      setIsButtonsLoading(false);
+      console.log('PayPal buttons rendered successfully');
+      
+    } catch (error) {
+      console.error('Error rendering PayPal buttons:', error);
+      setError('Failed to load payment options. Please try again.');
+      setIsButtonsLoading(false);
+    }
+  }, [onPaymentSuccess, cleanup]);
+
+  // Handle step change to payment
+  const handleShowPayment = useCallback(async () => {
+    setCurrentStep('payment');
+    setError(null);
+    
+    try {
+      await loadPayPalSDK();
+      // Small delay to ensure DOM is ready
+      setTimeout(() => {
+        renderPayPalButtons();
+      }, 100);
+    } catch (error) {
+      console.error('Error loading PayPal:', error);
+      setError('Failed to load PayPal. Please try again.');
+    }
+  }, [loadPayPalSDK, renderPayPalButtons]);
+
+  // Handle back to intro
+  const handleBackToIntro = useCallback(() => {
+    cleanup();
+    setCurrentStep('intro');
+    setError(null);
+    setPaymentProcessing(false);
+  }, [cleanup]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      cleanup();
+    };
+  }, [cleanup]);
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50" aria-modal="true" role="dialog">
-      <div className="bg-black/30 backdrop-blur-sm border border-gray-700 rounded-lg p-8 text-center max-w-sm mx-4 shadow-2xl shadow-gray-900/50">
-        <h2 className="text-3xl font-bold text-white mb-4">Unlock Unlimited Plays!</h2>
-        <p className="text-gray-300 mb-6">
-          Thanks for playing! Please make a one-time payment of $1 to continue.
-        </p>
-        <div ref={paypalRef} className="min-h-[100px] flex items-center justify-center">
-          {isLoading && !error && (
-            <p className="text-gray-400">Loading Payment Options...</p>
-          )}
-          {error && (
-            <p className="text-red-400">{error}</p>
+    <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+      <div className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-md mx-auto shadow-2xl overflow-hidden">
+        
+        {/* Header */}
+        <div className="flex justify-between items-center p-6 border-b border-gray-700">
+          <h2 className="text-xl font-bold text-white">Unlock Unlimited Plays!</h2>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-white text-2xl font-bold w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-800 transition-colors"
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-6">
+          {currentStep === 'intro' ? (
+            /* Intro Step */
+            <div className="text-center">
+              <div className="text-6xl mb-4">🎮</div>
+              <p className="text-gray-300 mb-6">
+                Enjoy unlimited gaming for just <span className="font-bold text-green-400">$1.00</span>
+              </p>
+              
+              <div className="bg-gray-800 rounded-lg p-4 mb-6">
+                <h3 className="text-white font-semibold mb-3">Premium Features:</h3>
+                <ul className="text-gray-300 text-sm space-y-2">
+                  <li className="flex items-center">
+                    <span className="text-green-400 mr-2">✓</span>
+                    Unlimited games
+                  </li>
+                  <li className="flex items-center">
+                    <span className="text-green-400 mr-2">✓</span>
+                    No interruptions
+                  </li>
+                  <li className="flex items-center">
+                    <span className="text-green-400 mr-2">✓</span>
+                    One-time payment
+                  </li>
+                  <li className="flex items-center">
+                    <span className="text-green-400 mr-2">✓</span>
+                    Instant activation
+                  </li>
+                </ul>
+              </div>
+              
+              <button
+                onClick={handleShowPayment}
+                disabled={isSDKLoading}
+                className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 disabled:from-gray-600 disabled:to-gray-700 text-white font-bold py-4 px-6 rounded-lg transition-all duration-300 transform hover:scale-105 shadow-lg flex items-center justify-center space-x-3"
+              >
+                <img 
+                  src="https://www.paypalobjects.com/webstatic/mktg/Logo/pp-logo-100px.png" 
+                  alt="PayPal" 
+                  className="h-6 w-auto"
+                />
+                <span>{isSDKLoading ? 'Loading...' : 'Pay with PayPal'}</span>
+              </button>
+              
+              <p className="text-xs text-gray-500 mt-4">
+                🔒 Secure payment processed by PayPal
+              </p>
+            </div>
+          ) : (
+            /* Payment Step */
+            <div>
+              {/* Back button */}
+              <button
+                onClick={handleBackToIntro}
+                disabled={paymentProcessing}
+                className="flex items-center text-gray-400 hover:text-white mb-4 transition-colors disabled:opacity-50"
+              >
+                ← Back
+              </button>
+
+              <div className="text-center mb-6">
+                <h3 className="text-white font-semibold mb-2">Complete Payment</h3>
+                <p className="text-gray-300 text-sm">
+                  Click the PayPal button below to complete your $1.00 payment
+                </p>
+              </div>
+
+              {/* Payment processing overlay */}
+              {paymentProcessing && (
+                <div className="absolute inset-0 bg-gray-900 bg-opacity-95 flex items-center justify-center rounded-xl z-10">
+                  <div className="text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+                    <p className="text-white font-semibold">Processing Payment...</p>
+                    <p className="text-gray-400 text-sm">Please wait, do not close this window</p>
+                  </div>
+                </div>
+              )}
+
+              {/* PayPal Buttons Container */}
+              <div 
+                ref={paypalContainerRef} 
+                className="min-h-[80px] flex items-center justify-center bg-gray-800 rounded-lg p-4"
+                style={{ minHeight: '80px' }}
+              >
+                {(isSDKLoading || isButtonsLoading) && !error && (
+                  <div className="text-center">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-2"></div>
+                    <p className="text-gray-400 text-sm">
+                      {isSDKLoading ? 'Loading PayPal SDK...' : 'Loading payment options...'}
+                    </p>
+                  </div>
+                )}
+                
+                {error && (
+                  <div className="text-center">
+                    <p className="text-red-400 mb-3 text-sm">{error}</p>
+                    <button 
+                      onClick={() => {
+                        setError(null);
+                        handleShowPayment();
+                      }}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm"
+                    >
+                      Try Again
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-4 text-center">
+                <p className="text-xs text-gray-500">
+                  🔒 Your payment is secured by PayPal's encryption
+                </p>
+              </div>
+            </div>
           )}
         </div>
       </div>
