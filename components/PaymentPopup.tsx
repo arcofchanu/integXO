@@ -103,66 +103,30 @@ export const PaymentPopup: React.FC<PaymentPopupProps> = ({ onPaymentSuccess, on
         createOrder: function() {
           console.log('Creating PayPal order...');
           
-          // For localhost development, use simpler order creation
-          if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-            return window.paypal.request({
-              url: '/v2/checkout/orders',
-              method: 'POST',
-              json: {
-                intent: 'CAPTURE',
-                purchase_units: [{
-                  amount: {
-                    currency_code: 'USD',
-                    value: '1.00'
-                  },
-                  description: 'Unlock unlimited Tic Tac Toe plays'
-                }],
-                application_context: {
-                  return_url: window.location.origin + '/success',
-                  cancel_url: window.location.origin + '/cancel'
-                }
-              }
-            }).then((res: any) => {
-              console.log('Order created for localhost:', res.id);
-              return res.id;
-            });
-          }
-          
-          // Production order creation
-          return fetch('/api/create-paypal-order', {
+          // Use client-side order creation for testing
+          return window.paypal.request({
+            url: '/v2/checkout/orders',
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              amount: '1.00',
-              currency: 'USD',
-              description: 'Unlock unlimited Tic Tac Toe plays'
-            })
-          }).then(response => {
-            if (!response.ok) {
-              throw new Error('Failed to create order');
-            }
-            return response.json();
-          }).then(data => {
-            console.log('Order created:', data.orderID);
-            return data.orderID;
-          }).catch(() => {
-            // Fallback to client-side order creation
-            return window.paypal.request({
-              url: '/v2/checkout/orders',
-              method: 'POST',
-              json: {
-                intent: 'CAPTURE',
-                purchase_units: [{
-                  amount: {
-                    currency_code: 'USD',
-                    value: '1.00'
-                  },
-                  description: 'Unlock unlimited Tic Tac Toe plays'
-                }]
+            json: {
+              intent: 'CAPTURE',
+              purchase_units: [{
+                amount: {
+                  currency_code: 'USD',
+                  value: '1.00'
+                },
+                description: 'Unlock unlimited Tic Tac Toe plays'
+              }],
+              application_context: {
+                return_url: window.location.origin,
+                cancel_url: window.location.origin
               }
-            }).then((res: any) => res.id);
+            }
+          }).then((res: any) => {
+            console.log('Order created:', res.id);
+            return res.id;
+          }).catch((error: any) => {
+            console.error('Order creation failed:', error);
+            throw new Error('Failed to create PayPal order');
           });
         },
 
@@ -170,39 +134,20 @@ export const PaymentPopup: React.FC<PaymentPopupProps> = ({ onPaymentSuccess, on
           console.log('Payment approved, order ID:', data.orderID);
           setPaymentProcessing(true);
           
-          return fetch('/api/capture-paypal-order', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              orderID: data.orderID
-            })
-          }).then(response => {
-            if (!response.ok) {
-              throw new Error('Failed to capture payment');
-            }
-            return response.json();
-          }).then(details => {
+          // Use client-side capture for testing
+          return window.paypal.request({
+            url: `/v2/checkout/orders/${data.orderID}/capture`,
+            method: 'POST'
+          }).then((details: any) => {
             console.log('Payment captured:', details);
             if (details.status === 'COMPLETED') {
               onPaymentSuccess();
             } else {
               setError('Payment was not completed successfully');
             }
-          }).catch(() => {
-            // Fallback to client-side capture
-            return window.paypal.request({
-              url: `/v2/checkout/orders/${data.orderID}/capture`,
-              method: 'POST'
-            }).then((details: any) => {
-              console.log('Payment captured via fallback:', details);
-              if (details.status === 'COMPLETED') {
-                onPaymentSuccess();
-              } else {
-                setError('Payment was not completed successfully');
-              }
-            });
+          }).catch((error: any) => {
+            console.error('Payment capture failed:', error);
+            setError('Payment capture failed. Please try again.');
           }).finally(() => {
             setPaymentProcessing(false);
           });
@@ -316,7 +261,7 @@ export const PaymentPopup: React.FC<PaymentPopupProps> = ({ onPaymentSuccess, on
               <button
                 onClick={handleShowPayment}
                 disabled={isSDKLoading}
-                className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 disabled:from-gray-600 disabled:to-gray-700 text-white font-bold py-4 px-6 rounded-lg transition-all duration-300 transform hover:scale-105 shadow-lg flex items-center justify-center space-x-3"
+                className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 disabled:from-gray-600 disabled:to-gray-700 text-white font-bold py-4 px-6 rounded-lg transition-all duration-300 transform hover:scale-105 shadow-lg flex items-center justify-center space-x-3 mb-3"
               >
                 <img 
                   src="https://www.paypalobjects.com/webstatic/mktg/Logo/pp-logo-100px.png" 
@@ -324,6 +269,18 @@ export const PaymentPopup: React.FC<PaymentPopupProps> = ({ onPaymentSuccess, on
                   className="h-6 w-auto"
                 />
                 <span>{isSDKLoading ? 'Loading...' : 'Pay with PayPal'}</span>
+              </button>
+              
+              {/* Test mode button for development */}
+              <button
+                onClick={() => {
+                  console.log('Test payment success triggered');
+                  onPaymentSuccess();
+                }}
+                className="w-full bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-105 shadow-lg flex items-center justify-center space-x-2"
+              >
+                <span>🧪</span>
+                <span>Test Mode - Simulate Payment Success</span>
               </button>
               
               <p className="text-xs text-gray-500 mt-4">
