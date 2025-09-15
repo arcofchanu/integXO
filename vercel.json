@@ -1,0 +1,16 @@
+{
+  "functions": {
+    "api/create-paypal-order.js": {
+      "maxDuration": 30
+    },
+    "api/capture-paypal-order.js": {
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
+    }
+  ]
+}
